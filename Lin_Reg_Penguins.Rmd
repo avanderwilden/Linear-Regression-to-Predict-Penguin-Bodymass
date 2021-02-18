@@ -1,0 +1,490 @@
+---
+title: "Using Linear Regression to Predict Body Mass in Penguins from Antarctica"
+author: "Group 6: Emiily Schwartz, Matthew Weiss, and Andrew vanderWilden"
+header-includes:
+     \usepackage{setspace}\doublespacing
+output:
+  pdf_document:
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+```{r}
+library(tidyverse)
+library(palmerpenguins)
+library(rpart)
+library(performance)
+library(knitr)
+library(kableExtra)
+
+df <- penguins %>%
+  filter(!is.na(bill_length_mm))
+```
+
+```{r}
+# Predict sex for missing values and fill in
+
+rp <- rpart(sex~.-year, df)
+
+idx <- which(is.na(df$sex))
+
+df$sex[idx] <- predict(rp, df[idx,], 'class')
+```
+
+\newpage
+
+# Abstract 
+
+Ecological studies are crucial to understanding animal populations. This report uses data from Dr. Kristen Gorman and the Palmer Long-Term Ecological Research Observatory. The data describe three species of penguins observed on three islands in the Palmer Archipelago, Antarctica.  We use multiple linear regression to estimate penguin body mass.  We find sex, flipper length, and bill depth to be significant predictors in our model.
+
+# Introduction
+
+
+## Orientation Material
+
+This report analyzes various traits of penguins to try to predict their body mass using linear regression. The data analyzed was collected and made available by Dr. Kristen Gorman and the [Palmer Long-Term Ecological Research Observatory](https://pal.lternet.edu/). The data describe three different species of penguins observed from three islands in the Palmer Archipelago, Antarctica.
+
+The data are cross-sectional and describe various physical traits of the penguins.
+
+
+## Key Aspects
+
+In this report, we fit a least-squares linear regression model to predict the body mass of penguins. We find the variables flipper length, sex, and bill depth to be significant predictors in our model.
+
+## Plan for the Rest of the Report
+
+The outline for the remainder of the report is as follows.  In section 3, we present the most important characteristics of the data and relationships between predictor variables and body mass. In section 4, the model selection process and following interpretation will be discussed. Concluding remarks can be found in section 5 with details to follow in the Appendix.
+
+
+# Data Characteristics
+
+The data are cross-sectional and describe traits for 342 penguins observed at the Palmer Long-Term Ecological Research study area.  The data contains information about the following 7 variables:
+
+
+## Variables
+
+
+| Item | Variable      | Definition                                                            |
+|-----:|:--------------|:----------------------------------------------------------------------|
+|  1   | species       | Species of Penguin (Adelie, Chinstrap, Gentoo)                        |
+|  2   | island        | Island where Penguins was Observed (Biscoe, Dream, Torgersen)         |
+|  3   | bill_length_mm | Length of Penguin's Bill in Millimeters                              |
+|  4   | bill_depth_mm | Depth of Penguin's Bill in Millimeters                                |
+|  5   | flipper_length_mm | Length of Penguin's Flipper in Millimeters                        |
+|  6   | body_mass_g   | Penguin's Body Mass in Grams                                          |
+|  7   | year          | Year Penguin was Observed and Marked                                  |
+
+
+See the below picture for clarification on bill length and depth definitions:
+
+
+![](penguin_bill_picture.png){ width=70% }
+
+The data contained 9 observations that were missing information on the sex of the penguin. In order to account for these missing values, we used recursive partitioning to impute the most likely sex of the penguin.
+
+The variable of interest in this report is the `body_mass_g`, or the body mass of the penguins measured in grams.  
+
+We will now introduce and dive deeper into each of the variables in the dataset.
+
+## Summaries
+
+The below table shows the five number summary for all numerical variables in the dataset:
+
+```{r}
+# 5 Number summary for all numeric variables
+
+a <- stack(df)
+
+z <- c('body_mass_g', 'bill_depth_mm', 'bill_length_mm', 'flipper_length_mm', 'year')
+
+b <- a %>%
+  group_by(ind) %>%
+  summarise(Mean = mean(values),
+            Median = median(values),
+            `St. Dev` = sd(values),
+            Max = max(values),
+            Min = min(values)) %>%
+  ungroup() %>%
+  rename('Variable' = ind) %>%
+  mutate_if(is.numeric, round, digits = 2) %>%
+  slice(match(z, Variable))
+
+kable(b, booktabs = T)
+```
+
+
+We can also observe the distribution of observations for the three categorical variables in the data set:
+
+```{r, comment = NA}
+# Frequency summary of non-numeric variables
+
+c <- df %>%
+  select(species, island, sex)
+
+summary(c)
+```
+
+
+```{r}
+rm(a,b,c,z, idx)
+```
+
+Upon further examination, we can see the penguins are not spread out in a geographically diverse manner:
+
+```{r, comment = NA}
+table(df$island, df$species)
+```
+
+We can observe from the above table that both Gentoo and Chinstrap penguins are observed on only one island while the Adelie penguins can be found on all three islands. This information is useful in that it shows much of the potential usefulness of the variable `island` is likely already captured in the variable `species` and likely won't need to be included in the model.
+
+We will now examine each of the categorical variables more in-depth.
+
+## Species
+
+When examining a categorical variable, using boxplots can show differences between groups. As we can see from the below plot, Gentoo penguins have on average a larger body mass than the other two species of penguins
+
+```{r}
+df %>%
+  ggplot(aes(species, body_mass_g, fill = species)) +
+  geom_boxplot() +
+  theme(legend.position = 'none') +
+  coord_flip() +
+  labs(
+    title = 'Species vs. Body Mass',
+    x = 'Species',
+    y = 'Body Mass (g)'
+  )
+```
+
+
+This suggests that `species` is likely a useful predictor of body mass, however it is possible this information will be captured by the inclusion of other variables.
+
+## Island
+
+The below plot shows the average body mass of penguins broken down by island.
+
+```{r}
+df %>%
+  ggplot(aes(island, body_mass_g, fill = island)) +
+  geom_boxplot() +
+  theme(legend.position = 'none') +
+  coord_flip() +
+  labs(
+    title = 'Island vs. Body Mass',
+    x = 'Island',
+    y = 'Body Mass (g)'
+  )
+```
+
+
+As noted previously, it appears there is a clear effect but this is likely because the penguins the species of penguins are not distributed in a geographically diverse manner.
+
+## Sex
+
+The below plot shows the average body mass of penguins differentiated by sex:
+
+```{r}
+df %>%
+  ggplot(aes(sex, body_mass_g, fill = sex)) +
+  geom_boxplot() +
+  theme(legend.position = 'none') +
+  coord_flip() +
+  labs(
+    title = 'Sex vs. Body Mass',
+    x = 'Sex',
+    y = 'Body Mass (g)'
+  )
+```
+
+
+We can clearly observe male penguins appear to have heavier body masses. This suggests the variable `sex` is useful in predicting body mass.
+
+We will now examine the effect of the numerical variables.
+
+## Bill Length
+
+The below plot shows bill length plotted against body mass:
+
+```{r}
+df %>%
+  ggplot(aes(bill_length_mm, body_mass_g)) +
+  geom_point() +
+  geom_smooth(method = 'lm', se = F) +
+  labs(
+    title = 'Bill Length vs Body Mass',
+    x = 'Bill Length (mm)',
+    y = 'Body Mass (g)'
+  )
+```
+
+
+We can observe both from the data and the trend line there appears to be a clear positive linear relationship between the two variables. This suggests the variable `bill_length_mm` is a useful predictor of body mass.
+
+## Bill Depth
+
+The below plot shows bill depth plotted against body mass:
+
+```{r}
+df %>%
+  ggplot(aes(bill_depth_mm, body_mass_g)) +
+  geom_point() +
+  geom_smooth(method = 'lm', se = F) +
+  labs(
+    title = 'Bill Depth vs Body Mass',
+    x = 'Bill Depth (mm)',
+    y = 'Body Mass (g)'
+  )
+```
+
+
+The trend line appears to show a negative linear relationship. This information could be useful however it could also tell a different story.  We plotted the same graph but differentiated by species:
+
+```{r}
+df %>%
+  ggplot(aes(bill_depth_mm, body_mass_g, color = species)) +
+  geom_point() +
+  geom_smooth(method = 'lm', se = F) +
+  labs(
+    title = 'Bill Depth vs Body Mass',
+    x = 'Bill Depth (mm)',
+    y = 'Body Mass (g)'
+  )
+```
+
+
+This graph tells a different story, showing a positive linear relationship between the two variables.  Both pieces of information suggest there is a relationship between bill depth and body mass, suggesting the variable could be of use as a predictor.
+
+## Flipper Length
+
+The below plot shows flipper length plotted against body mass:
+
+```{r}
+df %>%
+  ggplot(aes(flipper_length_mm, body_mass_g)) +
+  geom_point() +
+  geom_smooth(method = 'lm', se = F) +
+  labs(
+    title = 'Flipper Length vs Body Mass',
+    x = 'Flipper Length (mm)',
+    y = 'Body Mass (g)'
+  )
+```
+
+
+There appears to be a clear positive linear relationship between flipper length and body mass, suggesting `flipper_length_mm` is likely a useful predictor of body mass 
+
+
+
+# Model Selection and Interpretation
+
+```{r}
+set.seed(124857)
+
+idx <- sample(1:342, 60, replace = F)
+
+df$build_test <- sample(c(rep(1,282), rep(0,60)), 342, replace = F)
+```
+
+
+Based on the above data characteristics section, it has been established there are clear correlations and patterns between the the body mass of penguins and the various covariates.
+
+In this section we summarize these relationships using regression modeling.
+
+Our model was fit using 282 randomly selected observations with 60 observations withheld for model accuracy testing.
+
+A number of models were considered. Many more complex models that used either polynomials or interaction terms suffered from multi-colinearity problems.  This is likely due to some of the factors outlined in the data characteristics section which highlighted much of the information was redundantly captured across multiple variables. This led us to select a more simplistic model however we feel it fits the data well and offers valuable insights.
+
+Based on our investigation of the data, we recommend a linear regression model to estimate the body mass of penguins in the Palmer Archipelago, Antarctica. The variables used to create the model are `flipper_length_mm`, `sex`, and `bill_depth_mm`. The variable `sex` contained 9 missing values.  These values were imputed using recursive partitioning to assign the most likely sex of either male or female to the penguins.
+
+## Model
+
+$$
+BodyMass_i = \beta_0 + \beta_1 FlipperLength_i + \beta_2 Sex_i + \beta_3 BillDepth_i + \epsilon_i
+$$
+
+### Coefficients
+
+```{r, comment = NA}
+model <- lm(body_mass_g ~ flipper_length_mm + sex + bill_depth_mm,
+            data = df, subset = (build_test == 1))
+
+a <- broom::tidy(model) %>%
+  mutate(estimate = round(estimate, 3),
+         std.error = round(std.error, 2),
+         statistic = round(statistic, 3)) %>%
+  rename('Term' = term,
+         'Estimate' = estimate,
+         'Std. Error' = std.error,
+         't Statistic'= statistic,
+         'P value' = p.value)
+fit_inf <- broom::glance(model)
+
+kable(a, booktabs = T)
+```
+
+
+Both Flipper Length and Bill Depth are numerical covariates however sex is a categorical variable.  The base level of the variable sex is taken to be female, while a male penguin is assigned a value of 1.
+
+We can observe all four p-values of the coefficients appear to be significant at the $\alpha = 0.05$ level. In this case, the intercept term does not have a practical interpretation as it would describe a penguin without any flipper or bill. There are no penguins with a negative body weight.
+
+
+
+$$
+\widehat{BodyMass} = -2418.295 + 38.697 FlipperLength + 540.979Sex -84.139BillDepth
+$$
+
+
+Now, let us interpret the model’s coefficients from the table above. Looking at flipper length, as flipper length increases by one millimeter, the body mass will increase by approximately 38.697 grams. If male, one could predict the body mass of the penguin would increase by 540.979 grams. If female, this coefficient would equal 0 and therefore cancel out this 540.979 grams. In other words, if female, the body mass of the penguin would not increase based on this model. When looking at the bill depth of a penguin, if the bill depth increases by one millimeter, we could expect the body mass of the penguin to decrease by 84.139 grams
+
+
+For example, suppose we wanted to predict the body mass of a penguin with the following characteristics: 
+
+```{r}
+p_tab <- tibble(sex = 'male', flipper_length_mm = 204, bill_depth_mm = 16.1)
+
+p_tab %>%
+  rename('Flipper Length (mm)' = flipper_length_mm,
+         'Sex' = sex,
+         'Bill Depth (mm)' = bill_depth_mm) %>%
+  kable(booktabs = T)
+```
+
+We would use the model as such:
+
+$$
+4662.21 = -2418.295 + 38.697( 204) + 540.979(1) -84.139(16.1)
+$$
+
+We would interpret this to mean we predict a male penguin with a bill depth of 16.1 mm and a flipper length of 204 mm would have a body mass of 4662.21 grams (see appendix for prediction and confidence intervals).
+
+
+### Goodness of Fit
+
+```{r}
+fit_inf <- broom::glance(model) %>%
+  select(r.squared, adj.r.squared, AIC, statistic, p.value, df) %>%
+  rename('R-squared' = r.squared,
+         'Adj. R-squared' = adj.r.squared,
+         'F Statistic' = statistic,
+         'P Value' = p.value,
+         'Degrees of Freedom' = df) %>%
+  mutate_if(is_numeric, round, digits = 4) %>%
+  mutate(`Degrees of Freedom` = '3, 278',
+         `P Value` = '2.2e-16') %>%
+  stack() %>%
+  relocate(ind) %>%
+  rename('Statistic' = ind,
+         'Value' = values)
+  
+
+
+kable(fit_inf, booktabs = T)
+```
+
+The R-squared value tells that 82.97% of the variance in the response, body mass, can be explained by the predictors, in this case the flipper length, bill depth, and sex of the penguin. We can also observe the model passes the global F-test as the p-value is less than the significance level of $\alpha = 0.05$, indicating the model is more useful in predicting body mass than an intercept-only model would be.
+
+
+### Performance
+
+
+```{r}
+build <- df %>%
+  filter(build_test == 1)
+
+build <- build %>%
+  mutate(pred = predict(model, build))
+
+RMSE <- function(p, o){
+  sqrt(mean((p - o)^2))
+}
+
+Build_RMSE <- RMSE(build$pred, build$body_mass_g)
+```
+
+```{r}
+# RMSE's are very close, indicating the model is not overfit
+
+test <- df %>%
+  filter(build_test == 0)
+
+test <- test %>%
+  mutate(pred = predict(model, test))
+
+
+
+Test_RMSE <- RMSE(test$pred, test$body_mass_g)
+
+rmse_tab <- as_tibble(cbind(Build_RMSE, Test_RMSE))
+
+rmse_tab <- rmse_tab %>%
+  mutate_all(round, digits = 3) %>%
+  rename('Build RMSE' = Build_RMSE,
+         'Test RMSE' = Test_RMSE)
+
+kable(rmse_tab, booktabs = T)
+
+```
+
+From the above table, we can observe the model performed nearly as well on data it had never seen before as it did on the data used to build the model. We would expect the Test-RMSE to be slightly worse than the build-RMSE but a large difference would suggest the model has been overfit to the data used to build it. The fact that the Test-RMSE is only slightly higher than the build RMSE suggests the model is not overfit.
+
+
+
+### Linear Regression Assumption Checks
+
+```{r, fig.height=9, fig.width = 9}
+check_model(model)
+```
+
+
+Looking at the linear regression assumption checks above, let us key in on the normal probability plot and the residuals vs fits plot. For the normal probability plot, we can see that the data points showing the theoretical quantities’ response on the residuals are all relatively plotted along the line, showing the normality of the plot. This also shows there is no large impact of outliers on the data and suggests a linear trend. Looking at the residual plot, which plot the fitted values versus the residuals, we can see that the data points are plotted about equally around the horizontal line, suggesting the error terms are normally distributed. 
+
+
+# Summary and Concluding Remarks
+
+In trying to predict the body mass of penguins in the Palmer Archipelago, Antarctica region, we found the variables `sex`, `flipper_length_mm`, and `bill_depth_mm` to be significant predictors in our linear regression model.  This information is useful for the ecological study of penguins as well as monitoring long term trends in the penguin population as a whole.  It is likely worth running similar analyses on penguins from other regions of the world to see if the findings are consistent or if they apply only to penguins from this region.  It is also worth exploring if other methods of modeling would yield different results.
+
+# Appendix
+
+
+```{r}
+pint <- predict(model, p_tab, interval = 'predict')
+cint <- predict(model, p_tab, interval = 'confidence')
+```
+
+95% prediction interval:
+`r pint[2]` $\leftrightarrow$ `r pint[3]`
+
+
+95% confidence interval:
+`r cint[2]` $\leftrightarrow$ `r cint[3]`
+
+
+## Citations
+
+Gorman KB, Williams TD, Fraser WR (2014). Ecological sexual dimorphism and environmental variability within a community of Antarctic penguins (genus Pygoscelis). PLoS ONE 9(3):e90081. https://doi.org/10.1371/journal.pone.0090081
+
+
+Horst AM, Hill AP, Gorman KB (2020). palmerpenguins: Palmer
+Archipelago (Antarctica) penguin data. R package version 0.1.0.
+https://allisonhorst.github.io/palmerpenguins/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
